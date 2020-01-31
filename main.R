@@ -1,6 +1,6 @@
 #-------------------------------------Set-up environment----------------------------------------#
 # Import packages
-pacman::p_load(pacman, tidyverse, caret, rstudioapi, DMwR, ROSE, corrplot)
+pacman::p_load(pacman, tidyverse, caret, rstudioapi, DMwR, ROSE, corrplot, yardstick, pheatmap, RColorBrewer)
 
 # Set working directory
 path <- getActiveDocumentContext()$path
@@ -92,11 +92,18 @@ df %>%
     facet_wrap(~ variable, scales = "free") +
     geom_histogram()
 
-# Visualize correlations independant variables 
-corrplot(df, type = "upper", order = "hclust", 
-         tl.col = "black", tl.srt = 45)
+# Create matrix with only features and check correlations
+feat <- as.data.frame(df[, -ncol(df)])
+cor(feat)
 
-#--------------------------------Preprocessing and feature selection--------------------------------#
+# Visualize correlations independant variables 
+corrplot(cor(feat))
+
+# Visualize dependant variable
+ggplot(df, aes(x = quality)) +
+  geom_bar()
+
+#-----------------------------Preprocessing and feature selection------------------------------#
 
 
 
@@ -107,26 +114,12 @@ indexes <- createDataPartition(df$quality,
                                times = 1,
                                p = 0.70,
                                list = F)
-df_train <- df
+df_train <- df[indexes, ]
 df_val <- df[-indexes, ]
-
-test <- data.frame(model.matrix(quality~., data = df_train))[,-1]
-View(test)
-
-# # Balance the train data
-# df_train <-  downSample(x = df_train[, -ncol(df_train)],
-#                         y = df_train$quality,
-#                         yname = quality)
-# 
-# df_train <- upSample(x = df_train[, -ncol(df_train)],
-#                      y = df_train$quality,
-#                      yname = quality)
-# 
-# df_train <- ROSE(quality ~ ., data  = df_train)$data
 
 # Create models and predict on train
 # models = c("rf", "knn", "svmRadial")
-models = c("knn", "rf", "svmRadial")
+models = c("knn", "rf")
 models_fitted <-  list()
 models_results <- list()
 aggr_confusion_matrix <- list()
@@ -135,10 +128,10 @@ aggr_confusion_matrix <- list()
 fit_control <-  trainControl(method = "repeatedcv",
                              number = 5,
                              repeats = 1,
-                             sampling = "up")
-
-#"none", "down", "up", "smote", or "rose"
-
+                             sampling = "up",
+                             returnResamp = "all",
+                             savePredictions = T,
+                             returnData = T)
 
 for (i in models) {
   
@@ -157,15 +150,83 @@ for (i in models) {
 
 # Check model performance and pick best performing model
 resamps <- resamples(models_fitted)
+
+# Define theme for lay out
 theme1 <- trellis.par.get()
 theme1$plot.symbol$col = rgb(.2, .2, .2, .4)
 theme1$plot.symbol$pch = 16
 theme1$plot.line$col = rgb(1, 0, 0, .7)
 theme1$plot.line$lwd <- 2
 trellis.par.set(theme1)
+
+# Boxplot of results
 bwplot(resamps, layout = c(2, 1))
 
-#---------------------------------------Error Analysis------------------------------------#
+#-----------------------------------Error Analysis----------------------------------#
+
+# Look at confusionmatrix for one 
+confustion_mat <- models_fitted$rf$pred %>% 
+  filter(Resample == "Fold1.Rep1") %>%
+  conf_mat(obs, pred)
+
+autoplot(confustion_mat, type = "heatmap")
+
+# Average confusion matrix across all folds in terms of the proportion of the data contained in each cell.
+cells_per_resample  <- models_fitted$rf$pred %>% 
+  group_by(Resample) %>%
+  conf_mat(obs, pred) %>%
+  mutate(tidied = map(conf_mat, tidy)) %>%
+  unnest(tidied)
+
+counts_per_resample <- models_fitted$rf$pred %>%
+  group_by(Resample) %>%
+  summarise(total = n()) %>%
+  left_join(cells_per_resample, by = "Resample") %>%
+  mutate(prop = value/total) %>%
+  group_by(name) %>%
+  summarize(prop = mean(prop))
+
+# Express in percentage
+counts_per_resample_perc <- counts_per_resample
+counts_per_resample_perc$prop <- round((counts_per_resample_perc$prop * 100), digits = 4)
+
+# Convert to matrix
+mean_confustion_mat <- matrix(counts_per_resample_perc$prop, byrow = TRUE, ncol = 7)
+
+# Convert to data frame
+mean_confustion_df <- as.data.frame(mean_confustion_mat,
+                                 row.names = c("3", "4", "5", "6", "7", "8","9"))
+colnames(mean_confustion_df) <- c("3", "4", "5", "6", "7", "8","9")
+
+mean_confustion_mat <- round(mean_confustion_mat, 3)
+class(mean_confustion_mat)
+
+mean_confustion_mat <- data.matrix(mean_confustion_mat)
+class(mean_confustion_mat)
+
+pheatmap(mean_confustion_mat, 
+         display_numbers = T, 
+         color = colorRampPalette(rev(brewer.pal(n = 7, name =
+                                                   "RdYlBu")))(100),
+         cluster_rows = F, 
+         cluster_cols = F, 
+         show_rownames = T,
+         show_colnames = T,
+         fontsize_number = 20,
+         labels_row = "Prediction",
+         labels_col = "Truth")
+  
+# Predict model on the validation data
+pred <- predict(model, newdata = df_val)
+
+# Get performance metrics on the 
+pred_metric <- postResample(df_val$quality, pred)
+
+# Confusion matrix
+cm <- confusionMatrix(pred, df_val$quality)
+
+# Get 
+fourfoldplot(cm$table)
 
 #--------------------------------------Predict--------------------------------------#
 
@@ -185,3 +246,15 @@ write.csv(final_pred, "./final_pred.csv")
 
 # Reset settings for parallel computing
 stopCluster(clusters)
+
+# gbmFit4 <- train(Class ~ ., data = training, 
+#                  method = "gbm", 
+#                  trControl = fitControl, 
+#                  verbose = FALSE, 
+#                  ## Only a single model can be passed to the
+#                  ## function when no resampling is used:
+#                  tuneGrid = data.frame(interaction.depth = 4,
+#                                        n.trees = 100,
+#                                        shrinkage = .1,
+#                                        n.minobsinnode = 20),
+#                  metric = "ROC")
