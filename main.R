@@ -1,6 +1,6 @@
 #-------------------------------------Set-up environment----------------------------------------#
 # Import packages
-pacman::p_load(pacman, tidyverse, caret, rstudioapi, DMwR, ROSE, corrplot, yardstick, pheatmap, RColorBrewer)
+pacman::p_load(pacman, tidyverse, caret, rstudioapi, corrplot, yardstick, reshape2, RColorBrewer)
 
 # Set working directory
 path <- getActiveDocumentContext()$path
@@ -23,6 +23,10 @@ registerDoParallel(clusters)
 # Confirm how many cores are now "assigned" to R and RStudio
 getDoParWorkers() # Result 2 
 
+#-----------------------------------------functions------------------------------------------#
+
+
+
 #------------------------------------------Read data-------------------------------------------#
 
 # Load the data
@@ -30,6 +34,7 @@ df <- read.csv(file = "./data/training.csv")
 testing <- read.csv(file = "data/validation.csv")
 
 #-------------------------------------Initial Exploration--------------------------------------#
+
 
 # Drop index column ?? do with read function if possible
 df <- df[, -1]
@@ -117,9 +122,7 @@ indexes <- createDataPartition(df$quality,
 df_train <- df[indexes, ]
 df_val <- df[-indexes, ]
 
-# Create models and predict on train
-# models = c("rf", "knn", "svmRadial")
-models = c("knn", "rf")
+models = c("knn", "rf", "gbm", "svmPoly", "svmRadial")
 models_fitted <-  list()
 models_results <- list()
 aggr_confusion_matrix <- list()
@@ -164,11 +167,12 @@ bwplot(resamps, layout = c(2, 1))
 
 #-----------------------------------Error Analysis----------------------------------#
 
-# Look at confusionmatrix for one 
+# Look at confusionmatrix for a specific model
 confustion_mat <- models_fitted$rf$pred %>% 
   filter(Resample == "Fold1.Rep1") %>%
   conf_mat(obs, pred)
 
+# Plot confusion matrix for this 
 autoplot(confustion_mat, type = "heatmap")
 
 # Average confusion matrix across all folds in terms of the proportion of the data contained in each cell.
@@ -188,45 +192,31 @@ counts_per_resample <- models_fitted$rf$pred %>%
 
 # Express in percentage
 counts_per_resample_perc <- counts_per_resample
-counts_per_resample_perc$prop <- round((counts_per_resample_perc$prop * 100), digits = 4)
+counts_per_resample_perc$prop <- round(counts_per_resample_perc$prop * 100, digits = 2)
 
 # Convert to matrix
-mean_confustion_mat <- matrix(counts_per_resample_perc$prop, byrow = TRUE, ncol = 7)
+mean_confusion_mat <- matrix(counts_per_resample_perc$prop, byrow = TRUE, ncol = 7)
 
 # Convert to data frame
-mean_confustion_df <- as.data.frame(mean_confustion_mat,
-                                 row.names = c("3", "4", "5", "6", "7", "8","9"))
-colnames(mean_confustion_df) <- c("3", "4", "5", "6", "7", "8","9")
+mean_confusion_df <- as.data.frame(mean_confusion_mat)
+mean_confusion_df$id <- c("3", "4", "5", "6", "7", "8","9")
+colnames(mean_confusion_df) <- c("3", "4", "5", "6", "7", "8","9","pred")
 
-mean_confustion_mat <- round(mean_confustion_mat, 3)
-class(mean_confustion_mat)
+# Melt the data frame
+mean_confusion_melt <- melt(mean_confusion_df, variable.name = "true")
 
-mean_confustion_mat <- data.matrix(mean_confustion_mat)
-class(mean_confustion_mat)
+# Plot as heatmap
+ggplot(mean_confusion_melt, aes(x=true, y=pred, fill=value)) +
+  geom_tile() +
+  scale_fill_distiller(palette="Greens", direction=1) +
+  geom_text(aes(label=value), color="black") +
+  labs(title = "Confusion matrix averaged across cross validation")
 
-pheatmap(mean_confustion_mat, 
-         display_numbers = T, 
-         color = colorRampPalette(rev(brewer.pal(n = 7, name =
-                                                   "RdYlBu")))(100),
-         cluster_rows = F, 
-         cluster_cols = F, 
-         show_rownames = T,
-         show_colnames = T,
-         fontsize_number = 20,
-         labels_row = "Prediction",
-         labels_col = "Truth")
-  
-# Predict model on the validation data
-pred <- predict(model, newdata = df_val)
 
-# Get performance metrics on the 
-pred_metric <- postResample(df_val$quality, pred)
 
-# Confusion matrix
-cm <- confusionMatrix(pred, df_val$quality)
+# importance <- varImp(SVModel, scale=FALSE)
+# plot(importance)
 
-# Get 
-fourfoldplot(cm$table)
 
 #--------------------------------------Predict--------------------------------------#
 
@@ -258,3 +248,6 @@ stopCluster(clusters)
 #                                        shrinkage = .1,
 #                                        n.minobsinnode = 20),
 #                  metric = "ROC")
+# 
+# importance <- varImp(SVModel, scale=FALSE)
+# plot(importance)
