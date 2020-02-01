@@ -1,6 +1,6 @@
 #-------------------------------------Set-up environment----------------------------------------#
 # Import packages
-pacman::p_load(pacman, tidyverse, caret, rstudioapi, corrplot, yardstick, reshape2, RColorBrewer)
+pacman::p_load(pacman, tidyverse, caret, rstudioapi, corrplot, yardstick, reshape2, RColorBrewer, doParallel, VGAM)
 
 # Set working directory
 path <- getActiveDocumentContext()$path
@@ -15,7 +15,7 @@ set.seed(123)
 detectCores()
 
 # Create Cluster with desired number of cores. Don't use them all! Your computer is running other processes. 
-clusters <-  makeCluster(2)
+clusters <-  makeCluster(3)
 
 # Register cluster
 registerDoParallel(clusters)
@@ -23,7 +23,7 @@ registerDoParallel(clusters)
 # Confirm how many cores are now "assigned" to R and RStudio
 getDoParWorkers() # Result 2 
 
-#-----------------------------------------functions------------------------------------------#
+#-----------------------------------------Functions------------------------------------------#
 
 
 
@@ -122,7 +122,8 @@ indexes <- createDataPartition(df$quality,
 df_train <- df[indexes, ]
 df_val <- df[-indexes, ]
 
-models = c("knn", "rf", "gbm", "svmPoly", "svmRadial")
+# models = c("knn", "rf", "gbm", "svmPoly", "svmRadial") vglmAdjCat
+models = c("knn", "vglmAdjCat")
 models_fitted <-  list()
 models_results <- list()
 aggr_confusion_matrix <- list()
@@ -132,8 +133,8 @@ fit_control <-  trainControl(method = "repeatedcv",
                              number = 5,
                              repeats = 1,
                              sampling = "up",
-                             returnResamp = "all",
-                             savePredictions = T,
+                             returnResamp = "final",
+                             savePredictions = "final",
                              returnData = T)
 
 for (i in models) {
@@ -165,7 +166,26 @@ trellis.par.set(theme1)
 # Boxplot of results
 bwplot(resamps, layout = c(2, 1))
 
-#-----------------------------------Error Analysis----------------------------------#
+#-----------------------------------Model deepdive----------------------------------#
+
+# GBM with the aim to improve beyond random forest
+
+# Set-up resampling method
+fit_control <-  trainControl(method = "repeatedcv",
+                             number = 10,
+                             repeats = 3,
+                             sampling = "up",
+                             returnResamp = "all",
+                             savePredictions = "all",
+                             returnData = T,
+                             search = "random")
+
+# Model with tuneGrid
+model <- train(quality ~ ., data = df_train, 
+                          method = "gbm",
+                          trControl = fit_control,
+                          verbose = FALSE,
+                          tuneLength = 55)
 
 # Look at confusionmatrix for a specific model
 confustion_mat <- models_fitted$rf$pred %>% 
@@ -211,12 +231,6 @@ ggplot(mean_confusion_melt, aes(x=true, y=pred, fill=value)) +
   scale_fill_distiller(palette="Greens", direction=1) +
   geom_text(aes(label=value), color="black") +
   labs(title = "Confusion matrix averaged across cross validation")
-
-
-
-# importance <- varImp(SVModel, scale=FALSE)
-# plot(importance)
-
 
 #--------------------------------------Predict--------------------------------------#
 
