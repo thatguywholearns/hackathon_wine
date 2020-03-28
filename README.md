@@ -19,7 +19,7 @@ The goal is to model wine quality based on physicochemical tests and sensory dat
 There is no data about grape types, brand, selling price, etc.
 As the class is ordered, you could choose to do a regression instead of a classification.
 
-# Files 
+## Files 
 
 * Train and test data can be found in the data folder
 * The final predictions can be found in the file "final_pred.csv"
